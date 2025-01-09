@@ -1,31 +1,58 @@
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, Callable, List
 
 from neuralogic.core.settings import Settings
 from neuralogic.core.builder import DatasetBuilder
-from neuralogic.core import Template, Backend, BuiltDataset, SettingsProxy
+from neuralogic.core import Template, BuiltDataset, SettingsProxy, GroundedDataset
 from neuralogic.dataset.base import BaseDataset
 
 from neuralogic.utils.visualize import draw_model
 
 
 class AbstractNeuraLogic:
-    def __init__(self, backend: Backend, dataset_builder: DatasetBuilder, settings: SettingsProxy):
+    def __init__(self, dataset_builder: DatasetBuilder, template: Template, settings: SettingsProxy):
         self.need_sync = True
 
+        self.source_template = [rule for rule in template.template]
         self.template = dataset_builder.parsed_template
         self.dataset_builder = dataset_builder
 
-        self.backend = backend
         self.settings = settings
 
         self.hooks_set = False
-        self.hooks = {}
+        self.hooks: Dict[str, List[Callable]] = {}
 
     def __call__(self, sample):
         raise NotImplementedError
 
-    def build_dataset(self, dataset: Union[BaseDataset, BuiltDataset], file_mode: bool = False):
-        return self.dataset_builder.build_dataset(dataset, self.backend, self.settings, file_mode)
+    def ground(
+        self,
+        dataset: BaseDataset,
+        *,
+        batch_size: int = 1,
+        learnable_facts: bool = False,
+    ) -> GroundedDataset:
+        return self.dataset_builder.ground_dataset(
+            dataset,
+            self.settings,
+            batch_size=batch_size,
+            learnable_facts=learnable_facts,
+        )
+
+    def build_dataset(
+        self,
+        dataset: Union[BaseDataset, GroundedDataset],
+        *,
+        batch_size: int = 1,
+        learnable_facts: bool = False,
+        progress: bool = False,
+    ) -> BuiltDataset:
+        return self.dataset_builder.build_dataset(
+            dataset,
+            self.settings,
+            batch_size=batch_size,
+            learnable_facts=learnable_facts,
+            progress=progress,
+        )
 
     def set_hooks(self, hooks):
         self.hooks_set = len(hooks) != 0
@@ -57,11 +84,11 @@ class AbstractNeuraLogic:
                     weight_value.set(i, float(val))
                 continue
 
-            rows = len(value)
+            cols = len(value[0])
 
             for i, values in enumerate(value):
                 for j, val in enumerate(values):
-                    weight_value.set(i * rows + j, float(val))
+                    weight_value.set(i * cols + j, float(val))
 
     def parameters(self) -> Dict:
         return self.state_dict()
@@ -75,31 +102,38 @@ class AbstractNeuraLogic:
     def draw(
         self,
         filename: Optional[str] = None,
-        draw_ipython=True,
+        show=True,
         img_type="png",
         value_detail: int = 0,
         graphviz_path: Optional[str] = None,
         *args,
         **kwargs,
     ):
-        return draw_model(self, filename, draw_ipython, img_type, value_detail, graphviz_path, *args, **kwargs)
+        return draw_model(self, filename, show, img_type, value_detail, graphviz_path, *args, **kwargs)
 
 
 class AbstractEvaluator:
-    def __init__(self, backend: Backend, template: Template, settings: Settings):
+    def __init__(self, template: Template, settings: Settings):
         self.settings = settings.create_proxy()
-        self.backend = backend
-        self.dataset: Optional[BuiltDataset] = None
 
-        self.neuralogic_model = template.build(settings, backend)
+        self.neuralogic_model = template.build(settings)
         self.neuralogic_model.set_hooks(template.hooks)
 
-    def set_dataset(self, dataset: Union[BaseDataset, BuiltDataset]):
-        self.dataset = self.build_dataset(dataset)
-
-    def build_dataset(self, dataset: Union[BaseDataset, BuiltDataset], file_mode: bool = False):
+    def build_dataset(
+        self,
+        dataset: Union[BaseDataset, BuiltDataset],
+        *,
+        batch_size: int = 1,
+        learnable_facts: bool = False,
+        progress: bool = False,
+    ):
         if isinstance(dataset, BaseDataset):
-            return self.neuralogic_model.build_dataset(dataset, file_mode)
+            return self.neuralogic_model.build_dataset(
+                dataset,
+                batch_size=batch_size,
+                learnable_facts=learnable_facts,
+                progress=progress,
+            )
         return dataset
 
     @property
@@ -127,13 +161,11 @@ class AbstractEvaluator:
     def draw(
         self,
         filename: Optional[str] = None,
-        draw_ipython=True,
+        show=True,
         img_type="png",
         value_detail: int = 0,
         graphviz_path: Optional[str] = None,
         *args,
         **kwargs,
     ):
-        return self.neuralogic_model.draw(
-            filename, draw_ipython, img_type, value_detail, graphviz_path, *args, **kwargs
-        )
+        return self.neuralogic_model.draw(filename, show, img_type, value_detail, graphviz_path, *args, **kwargs)

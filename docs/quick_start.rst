@@ -86,7 +86,7 @@ The :py:class:`~neuralogic.dataset.logic.Dataset` class contains a set of fact l
 
 As you can see, this encoding can be pretty lengthy, but at the same time, it gives us multiple benefits over the tensor
 representation. For example, nothing stops you from adding edge features, such as :code:`Relation.edge(0, 1)[1.0]`,
-or even introducing hypergraphs, such as :code:`Relation.edge(0, 1, 2)` (read more about :doc:`hypergraphs`).
+or even introducing hypergraphs, such as :code:`Relation.edge(0, 1, 2)` (read more about :doc:`beyond/hypergraphs`).
 
 .. NOTE::
     We used the *edge* as the predicate name (:code:`Relation.edge`) to represent the graph edges and the *feature* (:code:`Relation.node_feature`) to represent nodes' features. This naming is arbitrary -
@@ -141,9 +141,10 @@ We do that by calling the :code:`build` method.
 
 .. code-block:: Python
 
-    from neuralogic.core import Settings, Optimizer
+    from neuralogic.core import Settings
+    from neuralogic.optim import SGD
 
-    settings = Settings(learning_rate=0.01, optimizer=Optimizer.SGD, epochs=100)
+    settings = Settings(optimizer=SGD(lr=0.01), epochs=100)
     model = template.build(Settings())
 
 
@@ -167,10 +168,11 @@ evaluation. Evaluators can then be customized via various settings wrapped in th
 .. code-block:: Python
 
     from neuralogic.nn import get_evaluator
-    from neuralogic.core import Settings, Optimizer
+    from neuralogic.core import Settings
+    from neuralogic.optim import SGD
 
 
-    settings = Settings(learning_rate=0.01, optimizer=Optimizer.SGD, epochs=100)
+    settings = Settings(optimizer=SGD(lr=0.01), epochs=100)
     evaluator = get_evaluator(template, settings)
 
     built_dataset = evaluator.build_dataset(dataset)

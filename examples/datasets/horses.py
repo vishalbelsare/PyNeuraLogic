@@ -1,4 +1,4 @@
-from neuralogic.core import Relation, Template, Var, Term
+from neuralogic.core import Relation, Template, Var, Const, Transformation
 from neuralogic.dataset import Dataset
 
 
@@ -9,26 +9,22 @@ template = Template()
 
 template.add_rules(
     [
-        Relation.foal(Var.X)[1,] <= (Relation.parent(Var.X, Var.Y), Relation.horse(Var.Y)), # todo gusta: mozna prejmenovat Atom -> Predicate by odpovidalo skutecnosti prirozeneji?
-        Relation.foal(Var.X)[1,] <= (Relation.sibling(Var.X, Var.Y), Relation.horse(Var.Y)),
-        Relation.negFoal(Var.X)[1,] <= Relation.foal(Var.X),
+        (Relation.foal(Var.X)[1, ] <= (Relation.parent(Var.X, Var.Y), Relation.horse(Var.Y))) | [Transformation.TANH],
+        (Relation.foal(Var.X)[1, ] <= (Relation.sibling(Var.X, Var.Y), Relation.horse(Var.Y))) | [Transformation.TANH],
+        (Relation.negFoal(Var.X)[1, ] <= Relation.foal(Var.X)) | [Transformation.TANH],
+        Relation.foal / 1 | [Transformation.TANH],
+        Relation.negFoal / 1 | [Transformation.TANH],
     ]
 )
 
-dataset.add_example(
-    [
-        Relation.horse(Term.aida)[1.0],
-        Relation.horse(Term.cheyenne)[1.0],
-        Relation.horse(Term.dakotta)[1.0],
-        Relation.parent(Term.star, Term.cheyenne)[1.0],
-        Relation.parent(Term.star, Term.aida)[1.0],
-        Relation.parent(Term.star, Term.dakotta)[1.0],
-    ]
-)
+example = [
+    Relation.horse(Const.aida)[1.0],
+    Relation.horse(Const.cheyenne)[1.0],
+    Relation.horse(Const.dakotta)[1.0],
+    Relation.parent(Const.star, Const.cheyenne)[1.0],
+    Relation.parent(Const.star, Const.aida)[1.0],
+    Relation.parent(Const.star, Const.dakotta)[1.0],
+]
 
-dataset.add_queries(
-    [
-        Relation.foal(Term.star)[1.0],
-        Relation.negFoal(Term.star)[0.0],
-    ]
-)
+dataset.add(Relation.foal(Const.star)[1.0], example)
+dataset.add(Relation.negFoal(Const.star)[0.0], example)

@@ -1,6 +1,7 @@
-from typing import Dict
+from typing import Dict, Optional
 from neuralogic.core.constructs.predicate import Predicate
-from neuralogic.core.constructs import atom
+from neuralogic.core.constructs import relation
+from neuralogic.core.constructs.term import Constant, Variable
 
 
 class AtomFactory:
@@ -22,35 +23,56 @@ class AtomFactory:
             return Predicate(name, arity, hidden, special)
 
         def __getattr__(self, item):
-            return atom.BaseAtom(Predicate(item, 0, self.is_hidden, self.is_special))
+            return relation.BaseRelation(Predicate(item, 0, self.is_hidden, self.is_special))
+
+        def get(self, name: str) -> relation.BaseRelation:
+            return relation.BaseRelation(Predicate(name, 0, self.is_hidden, self.is_special))
+
+        def __call__(self, *args, **kwargs):
+            raise Exception(
+                "Cannot add terms to not fully initialized relation - 'special' and 'hidden' are keywords, "
+                "that cannot be used as a predicate name with dot notation (use `get` method instead)"
+            )
+
+        def __getitem__(self, item):
+            raise Exception(
+                "Cannot add terms to not fully initialized relation - 'special' and 'hidden' are keywords, "
+                "that cannot be used as a predicate name with dot notation (use `get` method instead)"
+            )
 
     def __init__(self):
-        self.instances: Dict[str, Dict[int, atom.BaseAtom]] = {}
+        self.instances: Dict[str, Dict[int, relation.BaseRelation]] = {}
 
         self.special = AtomFactory.Predicate(special=True)
         self.hidden = AtomFactory.Predicate(hidden=True)
 
-    def get(self, name: str) -> atom.BaseAtom:
-        return atom.BaseAtom(Predicate(name, 0, False, False))
+    def get(self, name: str) -> relation.BaseRelation:
+        return relation.BaseRelation(Predicate(name, 0, False, False))
 
-    def __getattr__(self, item) -> atom.BaseAtom:
-        return atom.BaseAtom(Predicate(item, 0, False, False))
+    def __getattr__(self, item) -> relation.BaseRelation:
+        return relation.BaseRelation(Predicate(item, 0, False, False))
 
 
 class VariableFactory:
-    def __getattr__(self, item) -> str:
-        return item.upper()
+    def __getattr__(self, item: str) -> Variable:
+        return self.get(item)
+
+    def get(self, item: str, var_type: Optional[str] = None) -> Variable:
+        return Variable(item.capitalize(), var_type)
 
 
-class TermFactory:
-    def __getattr__(self, item) -> str:
-        return item.lower()
+class ConstantFactory:
+    def __getattr__(self, item: str) -> Constant:
+        return self.get(item)
+
+    def get(self, item: str, const_type: Optional[str] = None) -> Constant:
+        return Constant(item.lower(), const_type)
 
 
 Var = VariableFactory()
 Relation = AtomFactory()
-Term = TermFactory()
+Const = ConstantFactory()
 
 V = Var
-T = Term
+C = Const
 R = Relation

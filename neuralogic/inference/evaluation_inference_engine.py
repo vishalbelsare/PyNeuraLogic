@@ -1,44 +1,41 @@
 from typing import List, Union, Optional
 
-from neuralogic.core import Template, Settings, Backend
-from neuralogic.core.constructs.atom import AtomType
+from neuralogic.core import Template, Settings
+from neuralogic.core.constructs.relation import BaseRelation
 from neuralogic.core.constructs.rule import Rule
 
-from neuralogic.dataset import Dataset
+from neuralogic.dataset import Dataset, Sample
 
 
 class EvaluationInferenceEngine:
-    def __init__(self, template: Template):
-        self.settings = Settings()
+    def __init__(self, template: Template, settings: Settings = None):
+        self.settings = Settings() if settings is None else settings
         self.model = template.build(self.settings)
+        self.dataset = Dataset(Sample(None, None))
 
-        self.examples: List[Union[AtomType, Rule]] = []
-        self.dataset = Dataset()
-        self.dataset.examples = [[]]
+    def set_knowledge(self, examples: List[Union[BaseRelation, Rule]]) -> None:
+        self.dataset[0].example = examples
 
-    def set_knowledge(self, examples: List[Union[AtomType, Rule]]) -> None:
-        self.dataset.examples = [examples]
-
-    def q(self, query: AtomType, examples: Optional[List[Union[AtomType, Rule]]] = None):
+    def q(self, query: BaseRelation, examples: Optional[List[Union[BaseRelation, Rule]]] = None):
         return self.query(query, examples)
 
-    def query(self, query: AtomType, examples: Optional[List[Union[AtomType, Rule]]] = None):
-        global_examples = self.dataset.examples
+    def query(self, query: BaseRelation, examples: Optional[List[Union[BaseRelation, Rule]]] = None):
+        global_examples = self.dataset[0].example
 
         if examples is not None:
-            self.dataset.examples = [examples]
+            self.dataset[0].example = examples
 
-        self.dataset.queries = [query]
+        self.dataset[0].query = query
         variables = [(name, index) for index, name in enumerate(query.terms) if str(name).isupper()]
 
         try:
             built_dataset = self.model.build_dataset(self.dataset)
             results = self.model(built_dataset.samples, train=False)
-        except Exception as e:
-            self.dataset.examples = global_examples
+        except Exception:
+            self.dataset[0].example = global_examples
             return {}
 
-        self.dataset.examples = global_examples
+        self.dataset[0].example = global_examples
 
         if len(built_dataset.samples) != len(results):
             raise Exception
@@ -49,6 +46,6 @@ class EvaluationInferenceEngine:
                 sub_query = sub_query.split("(")[1].strip()[:-1]
 
                 substitutions = sub_query.split(",")
-                yield result[1], {label: substitutions[position].strip() for label, position in variables}
+                yield result, {label: substitutions[position].strip() for label, position in variables}
 
         return generator()

@@ -1,101 +1,145 @@
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Sequence
 
-from neuralogic.core.constructs.atom import BaseAtom, WeightedAtom
+import jpype
+
+from neuralogic.core.constructs.java_objects import JavaFactory
+from neuralogic.core.constructs.relation import BaseRelation
 from neuralogic.core.constructs.rule import Rule
 from neuralogic.dataset.base import BaseDataset
+from neuralogic.core.constructs.factories import R
 
-DatasetEntries = Union[BaseAtom, WeightedAtom, Rule]
+DatasetEntries = Union[BaseRelation, Rule]
+
+
+class Sample:
+    __slots__ = (
+        "query",
+        "example",
+    )
+
+    def __init__(
+        self, query: Optional[BaseRelation], example: Optional[Union[Sequence[DatasetEntries], DatasetEntries]]
+    ):
+        self.query = query
+
+        if example is None:
+            example = []
+
+        if not isinstance(example, Sequence):
+            self.example = [example]
+        else:
+            self.example = example
+
+    def __str__(self) -> str:
+        return str(self.query)
+
+    def __len__(self) -> int:
+        if self.example is None:
+            return 0
+        return len(self.example)
 
 
 class Dataset(BaseDataset):
     r"""
-    Dataset encapsulating (learning) samples in the form of logic format, allowing users to fully take advantage of the PyNeuraLogic library.
-
-    One learning sample consists of:
-    * Example: A list of logic facts and rules representing some instance (e.g., a graph)
-    * Query: A logic fact to mark the output of a model and optionally target label.
-
-    Examples and queries in the dataset can be paired in the following ways:
-
-    * N:N - Dataset contains N examples and N queries. They will be paired by their index.
-
-    .. code:: python
-
-        dataset.add_example(first_example)
-        dataset.add_example(second_example)
-
-        dataset.add_query(first_query)
-        dataset.add_query(second_query)
-
-        # Learning samples: [first_example, first_query], [second_example, second_query]
-
-    * 1:N - Dataset contains 1 example and N queries. All queries will be run on the example.
-
-    .. code:: python
-
-        dataset.add_example(example)
-
-        dataset.add_query(first_query)
-        dataset.add_query(second_query)
-
-        # Learning samples: [example, first_query], [example, second_query]
-
-    * N:M - Dataset contains N examples and M queries (N <= M). It pairs queries similarly to the N: N case but also
-      allows running multiple queries on a specific example (by inserting a list of queries instead of one query).
-
-    .. code:: python
-
-        dataset.add_example(first_example)
-        dataset.add_example(second_example)
-
-        dataset.add_query([first_query_0, first_query_1])
-        dataset.add_query(second_query)
-
-        # Learning samples: [first_example, first_query_0], [first_example, first_query_1], [second_example, second_query]
-
-    Parameters
-    ----------
-
-    examples : Optional[List]
-        List of examples. Default: ``None``
-    queries : Optional[List]
-        List of queries. Default: ``None``
-
+    Dataset encapsulating (learning) samples in the form of logic format, allowing users to fully take advantage of the
+    PyNeuraLogic library.
     """
-    def __init__(
-        self,
-        examples: Optional[List[List[DatasetEntries]]] = None,
-        queries: Optional[List[Union[List[DatasetEntries], DatasetEntries]]] = None
-    ):
-        self.examples: List[List[DatasetEntries]] = examples if examples is not None else []
-        self.queries: List[Union[List[DatasetEntries], DatasetEntries]] = queries if queries is not None else []
 
+    __slots__ = ("samples", "_examples", "_queries")
+
+    def __init__(self, samples: Optional[Union[List[Sample], Sample]] = None):
+        self.samples = []
+
+        if isinstance(samples, list):
+            self.samples = samples
+        elif not isinstance(samples, list):
+            self.samples = [samples]
+
+        self._examples = []
+        self._queries = []
+
+    def set_samples(self, samples: List[Sample]):
+        self.samples = samples
+
+    def add_samples(self, samples: List[Sample]):
+        self.samples.extend(samples)
+
+    def add_sample(self, sample: Sample):
+        self.samples.append(sample)
+
+    def add(self, query: BaseRelation, example: Optional[List[DatasetEntries]]):
+        self.samples.append(Sample(query, example))
+
+    def __getitem__(self, item: int) -> Sample:
+        return self.samples[item]
+
+    def __setitem__(self, key: int, value: Sample):
+        self.samples[key] = value
+
+    def __delitem__(self, key: int):
+        del self.samples
+
+    def __str__(self):
+        return ". ".join(str(s) for s in self.samples)
+
+    def __len__(self):
+        return len(self.samples)
+
+    # Deprecated
     def add_example(self, example):
         self.add_examples([example])
 
     def add_examples(self, examples: List):
-        self.examples.extend(examples)
-
-    def set_examples(self, examples: List):
-        self.examples = examples
+        self._examples.extend(examples)
 
     def add_query(self, query):
         self.add_queries([query])
 
     def add_queries(self, queries: List):
-        self.queries.extend(queries)
+        self._queries.extend(queries)
+
+    def set_examples(self, examples: List):
+        self._examples = examples
 
     def set_queries(self, queries: List):
-        self.queries = queries
+        self._queries = queries
 
-    def dump(
-        self,
-        queries_fp,
-        examples_fp,
-        sep: str = "\n",
-    ):
-        for examples in self.examples:
-            examples_fp.write(f"{','.join(example.to_str(False) for example in examples)}.{sep}")
+    def generate_features(self, feature_depth: int = 1, count_groundings: bool = True):
+        java_factory = JavaFactory()
 
-        for query in self.queries:
-            queries_fp.write(f"{query}{sep}")
+        clauses = []
+        vertex_lit = R.get("__vert")
+        vertex_lit.predicate.special = False
+        vertex_lit.predicate.hidden = False
+
+        for sample in self.samples:
+            vertex = set()
+
+            for e in sample.example:
+                if isinstance(e, Rule):
+                    vertex.update(self._get_constants(e.head))
+
+                    for rel in e.body:
+                        vertex.update(self._get_constants(rel))
+                if isinstance(e, BaseRelation):
+                    vertex.update(self._get_constants(e))
+
+            example = [vertex_lit(vert) for vert in vertex]
+            example.extend(sample.example)
+
+            clauses.append(java_factory.to_clause(example))
+
+        clause = jpype.java.util.ArrayList(clauses)
+
+        namespace = "cz.cvut.fel.ida.logic.features.generation"
+
+        jpype.JClass(f"{namespace}.FeatureGenerationSettings").COUNT_GROUNDINGS = count_groundings
+        features = jpype.JClass(f"{namespace}.FeatureGenerator").generateFeatures(clause, feature_depth)
+
+        table = [[int(i) for i in feats] for feats in features.table]
+        clauses = [str(clause) for clause in features.features]
+
+        return table, clauses
+
+    def _get_constants(self, relation: BaseRelation):
+        return [term for term in relation.terms if not str(relation)[0].isupper()]

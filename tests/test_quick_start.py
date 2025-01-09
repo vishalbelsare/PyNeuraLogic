@@ -1,7 +1,8 @@
-from neuralogic.dataset import Data, TensorDataset, Dataset
-from neuralogic.core import Template, Settings, Relation, Optimizer
+from neuralogic.dataset import Data, TensorDataset, Dataset, Sample
+from neuralogic.core import Template, Settings, Relation
 from neuralogic.nn import get_evaluator
 from neuralogic.nn.module import GCNConv
+from neuralogic.optim import SGD
 
 
 def test_quick_start_from_tensor():
@@ -21,21 +22,27 @@ def test_quick_start_from_tensor():
 
     logic_dataset = dataset.to_dataset()
 
-    assert len(logic_dataset.examples) == 1
-    assert len(logic_dataset.queries) == 1
-    assert len(logic_dataset.examples[0]) == 9
+    assert len(logic_dataset) == 3
+    assert len(logic_dataset[0]) == 9
 
     expected = [
-        "<1> edge(0, 1).", "<1> edge(1, 0).", "<1> edge(1, 2).", "<1> edge(2, 1).", "<1> edge(2, 0).",
-        "<1> edge(0, 2).", "<0> node_feature(0).", "<1> node_feature(1).", "<-1> node_feature(2).",
+        "<1> edge(0, 1).",
+        "<1> edge(1, 0).",
+        "<1> edge(1, 2).",
+        "<1> edge(2, 1).",
+        "<1> edge(2, 0).",
+        "<1> edge(0, 2).",
+        "<0> node_feature(0).",
+        "<1> node_feature(1).",
+        "<-1> node_feature(2).",
     ]
 
-    for a, b in zip(logic_dataset.examples[0], expected):
+    for a, b in zip(logic_dataset[0].example, expected):
         assert str(a) == b
 
-    assert str(logic_dataset.queries[0][0]) == "1.0 predict(0)."
-    assert str(logic_dataset.queries[0][1]) == "0.0 predict(1)."
-    assert str(logic_dataset.queries[0][2]) == "1.0 predict(2)."
+    assert str(logic_dataset[0]) == "1.0 predict(0)."
+    assert str(logic_dataset[1]) == "0.0 predict(1)."
+    assert str(logic_dataset[2]) == "1.0 predict(2)."
 
 
 def test_model_evaluation_from_tensor():
@@ -59,7 +66,7 @@ def test_model_evaluation_from_tensor():
         GCNConv(in_channels=5, out_channels=1, output_name="predict", feature_name="h0", edge_name="edge")
     )
 
-    settings = Settings(learning_rate=0.01, optimizer=Optimizer.SGD, epochs=100)
+    settings = Settings(optimizer=SGD(0.01), epochs=100)
     model = template.build(settings)
     built_dataset = model.build_dataset(dataset)
 
@@ -73,20 +80,25 @@ def test_model_evaluation_from_tensor():
 def test_model_evaluation_from_logic():
     dataset = Dataset()
 
-    dataset.add_example([
-        Relation.edge(0, 1), Relation.edge(1, 2), Relation.edge(2, 0),
-        Relation.edge(1, 0), Relation.edge(2, 1), Relation.edge(0, 2),
-
+    example = [
+        Relation.edge(0, 1),
+        Relation.edge(1, 2),
+        Relation.edge(2, 0),
+        Relation.edge(1, 0),
+        Relation.edge(2, 1),
+        Relation.edge(0, 2),
         Relation.node_feature(0)[0],
         Relation.node_feature(1)[1],
         Relation.node_feature(2)[-1],
-    ])
+    ]
 
-    dataset.add_queries([
-        Relation.predict(0)[1],
-        Relation.predict(1)[0],
-        Relation.predict(2)[1],
-    ])
+    dataset.add_samples(
+        [
+            Sample(Relation.predict(0)[1], example),
+            Sample(Relation.predict(1)[0], example),
+            Sample(Relation.predict(2)[1], example),
+        ]
+    )
 
     template = Template()
     template.add_module(
@@ -96,7 +108,7 @@ def test_model_evaluation_from_logic():
         GCNConv(in_channels=5, out_channels=1, output_name="predict", feature_name="h0", edge_name="edge")
     )
 
-    settings = Settings(learning_rate=0.01, optimizer=Optimizer.SGD, epochs=100)
+    settings = Settings(optimizer=SGD(0.01), epochs=100)
     model = template.build(settings)
     built_dataset = model.build_dataset(dataset)
 
@@ -110,20 +122,25 @@ def test_model_evaluation_from_logic():
 def test_evaluator_from_logic():
     dataset = Dataset()
 
-    dataset.add_example([
-        Relation.edge(0, 1), Relation.edge(1, 2), Relation.edge(2, 0),
-        Relation.edge(1, 0), Relation.edge(2, 1), Relation.edge(0, 2),
-
+    example = [
+        Relation.edge(0, 1),
+        Relation.edge(1, 2),
+        Relation.edge(2, 0),
+        Relation.edge(1, 0),
+        Relation.edge(2, 1),
+        Relation.edge(0, 2),
         Relation.node_feature(0)[0],
         Relation.node_feature(1)[1],
         Relation.node_feature(2)[-1],
-    ])
+    ]
 
-    dataset.add_queries([
-        Relation.predict(0)[1],
-        Relation.predict(1)[0],
-        Relation.predict(2)[1],
-    ])
+    dataset.add_samples(
+        [
+            Sample(Relation.predict(0)[1], example),
+            Sample(Relation.predict(1)[0], example),
+            Sample(Relation.predict(2)[1], example),
+        ]
+    )
 
     template = Template()
     template.add_module(
@@ -133,7 +150,7 @@ def test_evaluator_from_logic():
         GCNConv(in_channels=5, out_channels=1, output_name="predict", feature_name="h0", edge_name="edge")
     )
 
-    settings = Settings(learning_rate=0.01, optimizer=Optimizer.SGD, epochs=100)
+    settings = Settings(optimizer=SGD(0.01), epochs=100)
     evaluator = get_evaluator(template, settings=settings)
 
     built_dataset = evaluator.build_dataset(dataset)

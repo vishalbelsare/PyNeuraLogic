@@ -1,10 +1,16 @@
-numpy==1.20.3
-pre-commit==2.10.1
+numpy>=1.20.4
+pre-commit>=2.10.1
 pytest
 torch
-JPype1==1.3.0
+tqdm
+JPype1>=1.3.0
+matplotlib
 
-jupyter==1.0.0
+jupyter>=1.0.0
 
+sphinx
+sphinx-rtd-theme
 sphinx-tabs
 sphinx-copybutton
+
+torch_geometric

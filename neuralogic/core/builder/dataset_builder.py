@@ -1,21 +1,18 @@
-import tempfile
-from typing import Union, Set, Dict
+from typing import Union, Set, Dict, List
 
 import jpype
 
 import neuralogic.dataset as datasets
 from neuralogic import is_initialized, initialize
 from neuralogic.core.builder.builder import Builder
-from neuralogic.core.builder.components import BuiltDataset
-from neuralogic.core.enums import Backend
-from neuralogic.core.constructs.atom import BaseAtom, WeightedAtom
+from neuralogic.core.builder.components import BuiltDataset, GroundedDataset
+from neuralogic.core.constructs.relation import BaseRelation, WeightedRelation
 from neuralogic.core.constructs.rule import Rule
 from neuralogic.core.constructs.java_objects import JavaFactory
 from neuralogic.core.settings import SettingsProxy
 from neuralogic.core.sources import Sources
 
-
-TemplateEntries = Union[BaseAtom, WeightedAtom, Rule]
+TemplateEntries = Union[BaseRelation, WeightedRelation, Rule]
 
 
 class DatasetBuilder:
@@ -42,8 +39,7 @@ class DatasetBuilder:
         one_query_per_example = True
 
         for query in queries:
-            head, conjunction = self.java_factory.get_query(query)
-            facts = conjunction.facts
+            head, facts = self.java_factory.get_query(query)
 
             if head is not None:
                 id = head.literal.toString()
@@ -59,7 +55,7 @@ class DatasetBuilder:
                             for f in facts
                         ]
                     )
-            else:
+            elif facts is not None:
                 id = str(self.query_counter)
                 if len(facts) > 1:
                     one_query_per_example = False
@@ -67,16 +63,21 @@ class DatasetBuilder:
                 logic_samples.extend(
                     [self.logic_sample(f.getValue(), query_builder.createQueryAtom(id, f), True) for f in facts]
                 )
+            else:
+                logic_samples.append(None)
             self.query_counter += 1
         return logic_samples, one_query_per_example
 
-    def build_examples(self, examples, examples_builder):
+    def build_examples(self, examples, examples_builder, learnable_facts=False):
         logic_samples = []
         one = jpype.JClass("cz.cvut.fel.ida.algebra.values.ScalarValue")(1.0)
         examples_queries = False
 
         for example in examples:
-            label, lifted_example = self.java_factory.get_lifted_example(example)
+            if example is None:
+                example = []
+
+            label, lifted_example = self.java_factory.get_lifted_example(example, learnable_facts)
             example_query = False
 
             value = one
@@ -106,29 +107,35 @@ class DatasetBuilder:
             self.examples_counter += 1
         return logic_samples, examples_queries
 
-    def build_dataset(
-        self, dataset: datasets.BaseDataset, backend: Backend, settings: SettingsProxy, file_mode: bool = False
-    ) -> BuiltDataset:
-        """Builds the dataset (does grounding and neuralization) for this template instance and the backend
+    def ground_dataset(
+        self,
+        dataset: datasets.BaseDataset,
+        settings: SettingsProxy,
+        *,
+        batch_size: int = 1,
+        learnable_facts: bool = False,
+    ) -> GroundedDataset:
+        """Grounds the dataset
 
         :param dataset:
-        :param backend:
         :param settings:
-        :param file_mode:
+        :param batch_size:
+        :param learnable_facts:
         :return:
         """
-        if isinstance(dataset, datasets.TensorDataset):
-            if not file_mode:
-                return self.build_dataset(dataset.to_dataset(), backend, settings, False)
+        if isinstance(dataset, datasets.ConvertibleDataset):
+            return self.ground_dataset(
+                dataset.to_dataset(),
+                settings,
+                batch_size=batch_size,
+                learnable_facts=learnable_facts,
+            )
 
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt") as q_tf,\
-                    tempfile.NamedTemporaryFile(mode="w", suffix=".txt") as e_tf:
-                dataset.dump(q_tf, e_tf)
+        if batch_size > 1:
+            settings.settings.minibatchSize = batch_size
+            settings.settings.parallelTraining = True
 
-                q_tf.flush()
-                e_tf.flush()
-
-                return self.build_dataset(datasets.FileDataset(e_tf.name, q_tf.name), backend, settings, False)
+        builder = Builder(settings)
 
         if isinstance(dataset, datasets.Dataset):
             self.examples_counter = 0
@@ -141,15 +148,22 @@ class DatasetBuilder:
             query_builder.setFactoriesFrom(examples_builder)
 
             settings.settings.groundingMode = self.grounding_mode.INDEPENDENT
+            if len(dataset.samples) != 0 and (len(dataset._examples) != 0 or len(dataset._queries) != 0):
+                raise ValueError("Cannot provide both samples and examples with queries")
 
-            examples = dataset.examples
-            queries = dataset.queries
+            examples = dataset._examples
+            queries = dataset._queries
+
+            if len(dataset.samples) != 0:
+                examples, queries = self.samples_to_examples_and_queries(dataset.samples)
 
             if len(examples) == 1:
                 settings.settings.groundingMode = self.grounding_mode.GLOBAL
+            settings.settings.infer()
+            settings._setup_random_generator()
 
             self.java_factory.weight_factory = self.java_factory.get_new_weight_factory()
-            examples, example_queries = self.build_examples(examples, examples_builder)
+            examples, example_queries = self.build_examples(examples, examples_builder, learnable_facts)
 
             self.java_factory.weight_factory = self.java_factory.get_new_weight_factory()
             queries, one_query_per_example = self.build_queries(queries, query_builder)
@@ -157,9 +171,8 @@ class DatasetBuilder:
             logic_samples = DatasetBuilder.merge_queries_with_examples(
                 queries, examples, one_query_per_example, example_queries
             )
-            logic_samples = jpype.java.util.ArrayList(logic_samples).stream()
 
-            samples = Builder(settings).from_logic_samples(self.parsed_template, logic_samples, backend)
+            groundings = builder.ground_from_logic_samples(self.parsed_template, logic_samples)
 
             self.java_factory.weight_factory = weight_factory
         elif isinstance(dataset, datasets.FileDataset):
@@ -169,11 +182,38 @@ class DatasetBuilder:
             if dataset.examples_file is not None:
                 args.extend(["-e", dataset.examples_file])
             sources = Sources.from_args(args, settings)
-            samples = Builder(settings).from_sources(self.parsed_template, sources, backend)
+
+            groundings = builder.ground_from_sources(self.parsed_template, sources)
         else:
             raise NotImplementedError
 
-        return BuiltDataset(samples)
+        return GroundedDataset(groundings, builder)
+
+    def build_dataset(
+        self,
+        dataset: Union[datasets.BaseDataset, GroundedDataset],
+        settings: SettingsProxy,
+        *,
+        batch_size: int = 1,
+        learnable_facts: bool = False,
+        progress: bool = False,
+    ) -> BuiltDataset:
+        """Builds the dataset (does grounding and neuralization)
+
+        :param dataset:
+        :param settings:
+        :param batch_size:
+        :param learnable_facts:
+        :param progress:
+        :return:
+        """
+        grounded_dataset = dataset
+
+        if not isinstance(dataset, GroundedDataset):
+            grounded_dataset = self.ground_dataset(
+                dataset, settings, batch_size=batch_size, learnable_facts=learnable_facts
+            )
+        return BuiltDataset(grounded_dataset.neuralize(progress=progress), batch_size)
 
     @staticmethod
     def merge_queries_with_examples(queries, examples, one_query_per_example, example_queries=True):
@@ -189,6 +229,9 @@ class DatasetBuilder:
         if len(examples) == 1:
             logic_samples = []
             for query in queries:
+                if query is None:
+                    logic_samples.append(examples[0])
+                    continue
                 example = examples[0] if query.query.evidence is None else query
                 query_object = query if query.isQueryOnly else examples[0]
                 query_object.query.evidence = example.query.evidence
@@ -205,6 +248,9 @@ class DatasetBuilder:
             logic_samples = []
 
             for query, example in zip(queries, examples):
+                if query is None:
+                    logic_samples.append(example)
+                    continue
                 example_object = example if query.query.evidence is None else query
                 query_object = query if query.isQueryOnly else example
                 query_object.query.evidence = example_object.query.evidence
@@ -223,3 +269,18 @@ class DatasetBuilder:
             query_object.query.evidence = example_object.query.evidence
             logic_samples.append(query)
         return logic_samples
+
+    @staticmethod
+    def samples_to_examples_and_queries(samples: List):
+        example_dict = {}
+        queries_dict = {}
+
+        for sample in samples:
+            idx = id(sample.example)
+
+            if idx not in example_dict:
+                queries_dict[idx] = [sample.query]
+                example_dict[idx] = sample.example
+            else:
+                queries_dict[idx].append(sample.query)
+        return example_dict.values(), queries_dict.values()

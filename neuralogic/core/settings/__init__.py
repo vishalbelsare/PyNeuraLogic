@@ -1,32 +1,32 @@
 from typing import Any, Optional
 import weakref
 
+from neuralogic.core.enums import Grounder
 from neuralogic.nn.init import Initializer, Uniform
 from neuralogic.nn.loss import MSE, ErrorFunction
 from neuralogic.core.settings.settings_proxy import SettingsProxy
-from neuralogic.core.enums import Optimizer, Activation
+from neuralogic.optim import Optimizer, Adam
 
 
 class Settings:
     def __init__(
         self,
         *,
-        optimizer: Optimizer = Optimizer.ADAM,
+        optimizer: Optimizer = Adam(),
         learning_rate: Optional[float] = None,
         epochs: int = 3000,
         error_function: ErrorFunction = MSE(),
         initializer: Initializer = Uniform(),
-        rule_activation: Activation = Activation.TANH,
-        relation_activation: Activation = Activation.TANH,
         iso_value_compression: bool = True,
         chain_pruning: bool = True,
+        prune_only_identities: bool = False,
+        grounder: Grounder = Grounder.BUP,
     ):
         self.params = locals().copy()
         self.params.pop("self")
-        self._proxies = weakref.WeakSet()
+        self._proxies: weakref.WeakSet[SettingsProxy] = weakref.WeakSet()
 
-        if learning_rate is None:
-            self.params["learning_rate"] = 0.1 if optimizer == Optimizer.SGD else 0.001
+        self.kw_params = {}
 
     @property
     def iso_value_compression(self) -> bool:
@@ -45,12 +45,20 @@ class Settings:
         self._update("chain_pruning", chain_pruning)
 
     @property
-    def learning_rate(self) -> float:
-        return self.params["learning_rate"]
+    def prune_only_identities(self) -> bool:
+        return self.params["prune_only_identities"]
 
-    @learning_rate.setter
-    def learning_rate(self, learning_rate: float):
-        self._update("learning_rate", learning_rate)
+    @prune_only_identities.setter
+    def prune_only_identities(self, prune_only_identities: bool):
+        self._update("prune_only_identities", prune_only_identities)
+
+    @property
+    def grounder(self) -> Grounder:
+        return self.params["grounder"]
+
+    @grounder.setter
+    def grounder(self, grounder: Grounder):
+        self._update("grounder", grounder)
 
     @property
     def optimizer(self) -> Optimizer:
@@ -84,30 +92,28 @@ class Settings:
     def initializer(self, initializer: Initializer):
         self._update("initializer", initializer)
 
-    @property
-    def relation_activation(self) -> Activation:
-        return self.params["relation_activation"]
-
-    @relation_activation.setter
-    def relation_activation(self, value: Activation):
-        self._update("relation_activation", value)
-
-    @property
-    def rule_activation(self) -> Activation:
-        return self.params["rule_activation"]
-
-    @rule_activation.setter
-    def rule_activation(self, value: Activation):
-        self._update("rule_activation", value)
-
     def create_proxy(self) -> SettingsProxy:
         proxy = SettingsProxy(**self.params)
         self._proxies.add(proxy)
 
+        for k, v in self.kw_params.items():
+            proxy[k] = v
+
         return proxy
 
     def create_disconnected_proxy(self) -> SettingsProxy:
-        return SettingsProxy(**self.params)
+        proxy = SettingsProxy(**self.params)
+        for k, v in self.kw_params.items():
+            proxy[k] = v
+        return proxy
+
+    def __setitem__(self, key, value):
+        for proxy in self._proxies.copy():
+            proxy[key] = value
+        self.kw_params[key] = value
+
+    def __getitem__(self, item):
+        return self.kw_params[item]
 
     def _update(self, parameter: str, value: Any) -> None:
         if parameter not in self.params:

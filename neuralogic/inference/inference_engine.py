@@ -1,35 +1,30 @@
-from typing import List, Union, Optional
+from typing import List, Union, Optional, Tuple, Dict
 
 import jpype
 
 from neuralogic import is_initialized, initialize
-from neuralogic.core import Template, JavaFactory, Settings
+from neuralogic.core import Template, Settings, R
+from neuralogic.core.constructs.java_objects import JavaFactory
 from neuralogic.core.builder import DatasetBuilder
-from neuralogic.core.constructs.atom import AtomType
+from neuralogic.core.constructs.relation import BaseRelation
 from neuralogic.core.constructs.rule import Rule
 
 
 class InferenceEngine:
-    def __init__(self, template: Template):
+    def __init__(self, template: Template, settings: Settings = None):
         if not is_initialized():
             initialize()
 
-        self.settings = Settings().create_disconnected_proxy()
+        self.settings = Settings().create_disconnected_proxy() if settings is None else settings.create_proxy()
         self.java_factory = JavaFactory()
-
-        self.settings.settings.inferTemplateFacts = False
 
         self.parsed_template = template.get_parsed_template(self.settings, self.java_factory)
         self.dataset_builder = DatasetBuilder(self.parsed_template, self.java_factory)
 
-        self.examples: List[Union[AtomType, Rule]] = []
+        self.examples: List[Union[BaseRelation, Rule]] = []
 
         self.grounder = jpype.JClass("cz.cvut.fel.ida.logic.grounding.Grounder").getGrounder(self.settings.settings)
-        field = self.grounder.getClass().getDeclaredField("herbrandModel")
-        field.setAccessible(True)
-
-        self.herbrand_model = field.get(self.grounder)
-
+        self.matching = jpype.JClass("cz.cvut.fel.ida.logic.subsumption.Matching")()
         self.examples_builder = jpype.JClass("cz.cvut.fel.ida.logic.constructs.building.ExamplesBuilder")
         self.queries_builder = jpype.JClass("cz.cvut.fel.ida.logic.constructs.building.QueriesBuilder")
         self.grounding_sample = jpype.JClass("cz.cvut.fel.ida.logic.grounding.GroundingSample")
@@ -37,13 +32,37 @@ class InferenceEngine:
 
         self.empty_example = jpype.JClass("cz.cvut.fel.ida.logic.constructs.example.LiftedExample")()
 
-    def set_knowledge(self, examples: List[Union[AtomType, Rule]]) -> None:
+    def set_knowledge(self, examples: List[Union[BaseRelation, Rule]]) -> None:
         self.examples = examples
 
-    def q(self, query: AtomType, examples: Optional[List[Union[AtomType, Rule]]] = None):
+    def get_queries(self, examples: Optional[List[Union[BaseRelation, Rule]]] = None):
+        if examples is None:
+            examples = self.examples
+
+        examples_builder = self.examples_builder(self.settings.settings)
+
+        self.java_factory.weight_factory = self.java_factory.get_new_weight_factory()
+        built_examples = self.dataset_builder.build_examples([examples], examples_builder)[0]
+        sample = built_examples[0]
+
+        gs = self.grounding_sample(sample, self.parsed_template)
+
+        lifted_example = gs.query.evidence
+        template = gs.template
+
+        ground_template = self.grounder.groundRulesAndFacts(lifted_example, template)
+
+        ground_rules = ground_template.groundRules.values()
+        for ground_rule in ground_rules:
+            for head in ground_rule.keys():
+                ground_head = head.groundHead
+
+                yield R.get(str(ground_head.predicateName()))([str(term.name()) for term in ground_head.arguments()])
+
+    def q(self, query: BaseRelation, examples: Optional[List[Union[BaseRelation, Rule]]] = None):
         return self.query(query, examples)
 
-    def query(self, query: AtomType, examples: Optional[List[Union[AtomType, Rule]]] = None):
+    def query(self, query: BaseRelation, examples: Optional[List[Union[BaseRelation, Rule]]] = None):
         if examples is None:
             examples = self.examples
 
@@ -70,16 +89,27 @@ class InferenceEngine:
         ground_template = self.grounder.groundRulesAndFacts(lifted_example, template)
 
         clause = self.java_factory.atom_to_clause(query)
-        horn_clause = self.horn_clause(clause)
-        substitutions = self.herbrand_model.groundingSubstitutions(horn_clause)
+        name = str(query.predicate)
+        results: List[Dict[str, str]] = []
+        variables = [(index, term) for index, term in enumerate(query.terms) if str(term)[0].isupper()]
 
-        labels = list(substitutions.r)
-        substitutions_sets = list(substitutions.s)
+        self._get_substitutions(clause, name, variables, ground_template.groundRules, results)
+        self._get_substitutions(clause, name, variables, ground_template.groundFacts, results)
 
-        def generator():
-            for substitution_set in substitutions_sets:
-                yield {str(label): str(substitution) for label, substitution in zip(labels, substitution_set)}
-
-        if len(substitutions_sets) == 0:
+        if len(results) == 0:
             return {}
-        return generator()
+
+        if len(variables) == 0:
+            return iter([])
+
+        return results
+
+    def _get_substitutions(
+        self, clause, query_signature: str, variables: List[Tuple[int, str]], literals, substitutions: List
+    ):
+        for literal in literals:
+            if str(literal.predicate().toString()) == query_signature and self.matching.subsumption(
+                clause, self.java_factory.clause(literal)
+            ):
+                terms = literal.arguments()
+                substitutions.append({str(label): str(terms[index]) for index, label in variables})

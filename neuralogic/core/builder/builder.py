@@ -1,10 +1,10 @@
-from typing import List
+from typing import List, Optional
 
 import jpype
+from tqdm.autonotebook import tqdm
 
 from neuralogic import is_initialized, initialize
-from neuralogic.core.builder.components import Weight, Sample, RawSample
-from neuralogic.core.enums import Backend
+from neuralogic.core.builder.components import NeuralSample
 from neuralogic.core.settings import SettingsProxy
 from neuralogic.core.sources import Sources
 
@@ -25,6 +25,20 @@ class Builder:
         self.neural_model = jpype.JClass("cz.cvut.fel.ida.neural.networks.computation.training.NeuralModel")
         self.collectors = jpype.JClass("java.util.stream.Collectors")
 
+        @jpype.JImplements(jpype.JClass("java.util.function.IntConsumer"))
+        class Callback:
+            def __init__(self, progress_bar):
+                self.state = 0
+                self.progress_bar = progress_bar
+
+            @jpype.JOverride
+            def accept(self, count: int):
+                self.state = max(count, self.state)
+                if not self.progress_bar.disable:
+                    self.progress_bar.update(1)
+
+        self._callback = Callback
+
     def build_template_from_file(self, settings: SettingsProxy, filename: str):
         args = [
             "-t",
@@ -38,47 +52,42 @@ class Builder:
 
         return template
 
-    def from_sources(self, parsed_template, sources: Sources, backend: Backend):
-        source_pipeline = self.example_builder.buildPipeline(parsed_template, sources.sources)
-        source_pipeline.execute(None if sources is None else sources.sources)
-        java_model = source_pipeline.get()
+    def ground_from_sources(self, parsed_template, sources: Sources):
+        return self._ground(parsed_template, sources, None)
 
-        logic_samples = java_model.s
-        logic_samples = logic_samples.collect(self.collectors.toList())
+    def ground_from_logic_samples(self, parsed_template, logic_samples):
+        return self._ground(parsed_template, None, logic_samples)
 
-        if backend == Backend.JAVA:
-            return [RawSample(sample) for sample in logic_samples]
-        return Builder.build(logic_samples)
+    def _ground(self, parsed_template, sources: Optional[Sources], logic_samples) -> List[NeuralSample]:
+        if sources is not None:
+            ground_pipeline = self.example_builder.buildGroundings(parsed_template, sources.sources)
+        else:
+            logic_samples = jpype.java.util.ArrayList(logic_samples).stream()
+            ground_pipeline = self.example_builder.buildGroundings(parsed_template, logic_samples)
 
-    def from_logic_samples(self, parsed_template, logic_samples, backend: Backend):
-        source_pipeline = self.example_builder.buildPipeline(parsed_template, logic_samples)
-        source_pipeline.execute(None)
-        java_model = source_pipeline.get()
+        ground_pipeline.execute(None if sources is None else sources.sources)
 
-        logic_samples = java_model.s
-        logic_samples = logic_samples.collect(self.collectors.toList())
+        return ground_pipeline.get()
 
-        if backend == Backend.JAVA:
-            return [RawSample(sample) for sample in logic_samples]
+    def neuralize(self, groundings, progress: bool, length: Optional[int]) -> List[NeuralSample]:
+        if not progress:
+            return self._neuralize(groundings, None)
+        with tqdm(total=length, desc="Building", unit=" samples", dynamic_ncols=True) as pbar:
+            return self._neuralize(groundings, self._callback(pbar))
 
-        return Builder.build(logic_samples)
+    def _neuralize(self, groundings, callback) -> List[NeuralSample]:
+        neuralize_pipeline = self.example_builder.neuralize(groundings, callback)
+        neuralize_pipeline.execute(None)
 
-    def build_model(self, parsed_template, backend: Backend, settings: SettingsProxy):
+        samples = neuralize_pipeline.get()
+        logic_samples = samples.collect(self.collectors.toList())
+
+        return [NeuralSample(sample, None) for sample in logic_samples]
+
+    def build_model(self, parsed_template, settings: SettingsProxy):
         neural_model = self.neural_model(parsed_template.getAllWeights(), settings.settings)
 
-        if backend == Backend.JAVA:
-            return neural_model
-
-        dummy_weight = Weight.get_unit_weight()
-        weights: List = [dummy_weight] * len(parsed_template.getAllWeights())
-
-        for x in parsed_template.getAllWeights():
-            weight = Weight(x)
-
-            if weight.index >= len(weights):
-                weights.extend([dummy_weight] * (weight.index - len(weights) + 1))
-            weights[weight.index] = weight
-        return weights
+        return neural_model
 
     @staticmethod
     def get_builders(settings: SettingsProxy):
@@ -87,9 +96,7 @@ class Builder:
         return builder
 
     @staticmethod
-    def build(samples):
-        serializer = jpype.JClass("cz.cvut.fel.ida.neural.networks.structure.export.NeuralSerializer")()
-        super_detailed_format = jpype.JClass("cz.cvut.fel.ida.setup.Settings").superDetailedNumberFormat
-        serializer.numberFormat = super_detailed_format
-
-        return [Sample(serializer.serialize(sample), sample) for sample in samples]
+    def _get_spinner_text(count: int) -> str:
+        if count == 1:
+            return f"Built {count} sample"
+        return f"Built {count} samples"

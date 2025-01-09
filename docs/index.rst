@@ -22,8 +22,8 @@ PyNeuraLogic
     :caption: Beyond GNNs
     :hidden:
 
-    hypergraphs
-    heterophily
+    beyond/hypergraphs
+    beyond/heterophily
 
 
 .. toctree::
@@ -31,10 +31,14 @@ PyNeuraLogic
     :hidden:
 
     package/neuralogic
-    package/neuralogic.core
+    package/core/neuralogic.core
     package/neuralogic.dataset
-    package/neuralogic.nn
-    package/neuralogic.utils
+    package/neuralogic.db
+    package/neuralogic.inference
+    package/neuralogic.logging
+    package/nn/neuralogic.nn
+    package/optim/neuralogic.optim
+    package/utils/neuralogic.utils
 
 
 
@@ -82,7 +86,7 @@ Or, a bit more 'formally':
     Relation.node2(Var.X)[5,10] <= (Relation.node1(Var.Y)[10,20], Relation.edge(Var.Y, Var.X))
 
 to project your :code:`[1,20]` input node embeddings through a learnable :code:`[10,20]` layer before the aggregation,
-and subsequently a :code:`[5,10]` layer after the aggregation. The particular aggregation and activation functions, as
+and subsequently a :code:`[5,10]` layer after the aggregation. The particular aggregation and transformation functions, as
 well as other details, can naturally be `specified further <https://pyneuralogic.readthedocs.io/en/latest/language.html>`_,
 but you can as well leave it default like we did here with your first, fully functional GNN layer!
 
@@ -108,17 +112,6 @@ This gives you considerably more expressiveness, and, perhaps surprisingly, some
 
 We hope you'll find the framework useful in designing your own deep **relational** learning ideas beyond the GNNs!
 Please let us know if you need some guidance or would like to cooperate!
-
-
-Supported backends
-******************
-
-Models defined in PyNeuraLogic can be built for and evaluated in different backends. Currently, you can pick and use
-the following backends, which, except for the Java backend, have to be additionally installed:
-
-- Java
-- `DyNet <https://github.com/clab/dynet>`_
-- `PyTorch Geometric <https://github.com/rusty1s/pytorch_geometric>`_
 
 
 Examples

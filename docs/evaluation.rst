@@ -10,7 +10,7 @@ The 'compilation' is done in two steps. Firstly, we retrieve a model instance fo
 
 .. code-block:: Python
 
-    from neuralogic.core import Backend, Settings
+    from neuralogic.core import Settings
 
     settings = Settings()
     model = template.build(settings)
@@ -33,13 +33,10 @@ Saving and Loading Model
 ########################
 
 When our model is trained, or we want to persist the model's state (e.g., make a checkpoint),
-we can utilize the model instance method :py:meth:`~neuralogic.nn.base.AbstractNeuraLogic.state_dict`. The method puts all parameters' values into a dictionary that can be later saved (e.g., in JSON or in binary) or somehow manipulated.
+we can utilize the model instance method :py:meth:`~neuralogic.nn.base.AbstractNeuraLogic.state_dict` (or :py:meth:`~neuralogic.nn.base.AbstractNeuraLogic.parameters`).
+The method puts all parameters' values into a dictionary that can be later saved (e.g., in JSON or in binary) or somehow manipulated.
 
 When we want to load a state into our model, we can then simply pass the state into :py:meth:`~neuralogic.nn.base.AbstractNeuraLogic.load_state_dict` method.
-
-.. Warning::
-
-    The compatibility between backends for loading model state is ensured only for the **DyNet** and **Java** backends.
 
 .. note::
 
@@ -56,7 +53,7 @@ Writing custom training loops and handling different backends can be cumbersome 
     from neuralogic.nn import get_evaluator
 
 
-    evaluator = get_evaluator(template, settings, Backend.JAVA)
+    evaluator = get_evaluator(template, settings)
 
 
 Once you have an evaluator, you can evaluate or train the model on a dataset. The dataset doesn't have to be pre-built, as in the case of classical evaluation - the evaluator handles that for you.
@@ -72,19 +69,19 @@ Settings Instance
 
 The :py:class:`~neuralogic.core.settings.Settings` instance contains all the settings used to customize the behavior of different parts of the library.
 
-Most importantly, it affects the behavior of the model building (e.g., specify default rule/relation activation functions), evaluators (e.g., error function, number of epochs, learning rate, optimizer),
+Most importantly, it affects the behavior of the model building (e.g., specify default rule/relation transformation functions), evaluators (e.g., error function, number of epochs, learning rate, optimizer),
 and the model itself (e.g., initialization of the learnable parameters).
 
 .. code-block:: Python
 
-    from neuralogic.core import Settings, Optimizer, Initializer
+    from neuralogic.core import Settings, Initializer
     from neuralogic.nn.init import Uniform
+    from neuralogic.optim import SGD
 
 
     Settings(
         initializer=Uniform(),
-        optimizer=Optimizer.SGD,
-        learning_rate=0.1,
+        optimizer=SGD(lr=0.1),
         epochs=100,
     )
 

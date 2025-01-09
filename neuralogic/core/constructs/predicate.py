@@ -1,11 +1,10 @@
 from typing import Sequence
 
-from neuralogic.core.enums import Activation, Aggregation, ActivationAggregation, ActivationAgg
 from neuralogic.core.constructs.metadata import Metadata
 
 
 class Predicate:
-    """WeightedPredicate"""
+    __slots__ = "name", "arity", "hidden", "special"
 
     def __init__(self, name, arity, hidden=False, special=False):
         if name.startswith("_"):
@@ -22,39 +21,44 @@ class Predicate:
             return self
 
     def to_str(self):
+        if not self.special and not self.hidden:
+            return self.name
+
         special = "@" if self.special else ""
         hidden = "*" if self.hidden else ""
         return f"{hidden}{special}{self.name}"
 
-    def __str__(self):
+    def __str__(self) -> str:
         special = "@" if self.special else ""
         hidden = "*" if self.hidden else ""
         return f"{hidden}{special}{self.name}/{self.arity}"
 
+    def __repr__(self) -> str:
+        return self.__str__()
+
     def __or__(self, other) -> "PredicateMetadata":
         if isinstance(other, Sequence):
-            metadata = Metadata()
-
-            for entry in other:
-                if isinstance(entry, (Activation, ActivationAgg, ActivationAggregation)):
-                    metadata.activation = entry
-                elif isinstance(entry, Aggregation):
-                    metadata.aggregation = entry
-                else:
-                    raise NotImplementedError
-            other = metadata
+            other = Metadata.from_iterable(other)
         elif not isinstance(other, Metadata):
             raise NotImplementedError
         return PredicateMetadata(self, other)
 
 
 class PredicateMetadata:
+    __slots__ = "predicate", "metadata"
+
     def __init__(self, predicate: Predicate, metadata: Metadata):
-        if metadata.aggregation is not None or metadata.learnable is not None:
-            raise NotImplementedError
+        if metadata.aggregation is not None:
+            raise ValueError(f"Cannot set 'aggregation' parameter on predicate ({predicate}) metadata")
+
+        if metadata.learnable is not None:
+            raise ValueError(f"Cannot set 'learnable' parameter on predicate ({predicate}) metadata")
 
         self.predicate = predicate
         self.metadata = metadata
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.predicate} {self.metadata}"
+
+    def __repr__(self) -> str:
+        return self.__str__()
